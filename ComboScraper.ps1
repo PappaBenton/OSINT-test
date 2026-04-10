@@ -22,6 +22,13 @@ $browserTimeoutMs = 80000
 $minDelaySeconds = 2
 $maxDelaySeconds = 5
 $maxUrlLength = 2000
+$blockedDomains = @(
+    'hsin.dhs.gov',
+    'inteldocs.intelink.gov',
+    'advantage.mandiant.com',
+    'falcon.laggar.gcw.crowdstrike.com'
+)
+
 
 $browserHeaders = @{
     'User-Agent'                = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
@@ -120,6 +127,26 @@ function Get-ChromiumPath {
     }
 
     throw 'Neither Microsoft Edge nor Google Chrome was found.'
+}
+
+function Test-BlockedDomain {
+    param([Parameter(Mandatory)][string]$Url)
+
+    try {
+        $hostName = ([Uri]$Url).Host.ToLowerInvariant()
+    }
+    catch {
+        return $false
+    }
+
+    foreach ($blocked in $blockedDomains) {
+        $blockedHost = $blocked.ToLowerInvariant()
+        if ($hostName -eq $blockedHost -or $hostName.EndsWith('.' + $blockedHost)) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Get-OrderedOsintItems {
@@ -469,6 +496,22 @@ try {
             URL = $item.URL
             Notes = 'Manual review required'
             SavedAs = [System.IO.Path]::GetFileName($filePath)
+        }
+
+        if (Test-BlockedDomain -Url $item.URL) {
+            Save-TextFile -Path $filePath -Content @(
+                "TITLE: $($item.Title)"
+                "URL: $($item.URL)"
+                ''
+                'SKIPPED - DOMAIN EXCLUDED FROM SCRAPING'
+            ) | Out-Null
+
+            $result.Status = 'Skipped'
+            $result.Method = 'ExcludedDomain'
+            $result.Notes = 'Skipped due to blocked domain rule'
+            Write-Log -Level WARN -Message ("Skipped blocked domain URL: {0}" -f $item.URL)
+            $results += [PSCustomObject]$result
+            continue
         }
 
         $delay = Get-RandomDelaySeconds
